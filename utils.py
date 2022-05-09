@@ -3,6 +3,7 @@ from nltk.stem import PorterStemmer
 from nltk.corpus import stopwords
 import re
 import numpy as np
+import pandas as pd
 # nltk.download('stopwords')
 stop_words = stopwords.words('english')
 
@@ -31,7 +32,7 @@ def prep_data_to_doc(df):
 
 def prep_data_explode(df):
     _df = df.copy()
-    _df.loc[:, 'tweet'] = _df.explode('tweet')
+    _df = _df.explode('tweet')
     return _df
 
 
@@ -59,14 +60,24 @@ def is_retweet(tweet):
     return 1 if tweet.startswith('RT') else 0
 
 
-def tweet_level_prep(original_tweet_df, agg='mean'):
+def tweet_level_prep(original_tweet_df, normalize=False):
     tweet_df = prep_data_explode(original_tweet_df)
     tweet_df.loc[:, 'num_mentions'] = tweet_df['tweet'].apply(extract_num_mentions)
     tweet_df.loc[:, 'num_links'] = tweet_df['tweet'].apply(extract_num_links)
-    tweet_df.loc[:, 'is_retweet'] = tweet_df['tweet'].apply(is_retweet)
-    if agg == 'mean':
-        return tweet_df[['ID', 'num_mentions', 'num_links', 'is_retweet']].groupby(['ID']).mean().reset_index(drop=True)
-    elif agg == 'sum':
-        return tweet_df[['ID', 'num_mentions', 'num_links', 'is_retweet']].groupby(['ID']).sum().reset_index(drop=True)
-    else:
-        return tweet_df
+    tweet_df.loc[:, 'retweet'] = tweet_df['tweet'].apply(is_retweet)
+    tweet_df['num_tweets'] = 1
+
+    result_df = tweet_df[['ID', 'num_mentions', 'num_links', 'retweet', 'num_tweets']].groupby(['ID']).sum().reset_index()
+    if normalize:
+        for col in result_df.columns[1:-1]:
+            result_df[col] = result_df[col] / result_df.iloc[:, -1]
+    return result_df
+
+
+
+if __name__ == '__main__':
+
+    tweets_df = pd.read_csv('Twibot-20/tweets_explode.csv')
+    tweets_df.dropna(inplace=True)
+    tw = tweet_level_prep(tweets_df, normalize=True)
+    print(tw.sample(5))
