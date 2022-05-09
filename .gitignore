@@ -1,3 +1,6 @@
 # data storage
 Twibot-20/
 __pycache__/
+
+# nmf model
+nmf_pipe_tweets_sm.pkl
