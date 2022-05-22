@@ -1,23 +1,42 @@
 import nltk
 from nltk.stem import PorterStemmer
 from nltk.corpus import stopwords
+import spacy
+spacy_model = spacy.load('en_core_web_lg')
+
+from sklearn.decomposition import NMF
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.pipeline import make_pipeline
+
+import gzip
 import re
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
-import gzip
+
+from scipy.stats import skew, kurtosis
 # nltk.download('stopwords')
 stop_words = stopwords.words('english')
 
 
+###################################################################################
+# stemming and lemmatizing
+###################################################################################
 
-
-stemmer = PorterStemmer()
 def stem_token(text):
+    stemmer = PorterStemmer()
     tokens = [stemmer.stem(word) for word in re.findall(r'\b\w\w+\b', text) if word not in stop_words]
     return tokens
 
+def spacy_tokenizer(text):
+    sp_text = spacy_model(text)
+    tokens = [token.lemma_ for token in sp_text if (not token.is_stop and token.is_alpha)]
+    return tokens
 
+
+####################################################################################
+################################ helper functions ##################################
+####################################################################################
 
 def change_tweets_to_doc(row):
     if row is not None:
@@ -37,8 +56,71 @@ def prep_data_explode(df):
     _df = _df.explode('tweet')
     return _df
 
+# metrics
+# unweighted gini coefficient measure taken from 
+# https://stackoverflow.com/questions/48999542/more-efficient-weighted-gini-coefficient-in-python 
+# by user Gaëtan de Menten
+def gini(x):
+    sorted_x = np.sort(x)
+    n = len(x)
+    cumx = np.cumsum(sorted_x, dtype=float)
+    return (n + 1 - 2 * np.sum(cumx) / cumx[-1]) / n
 
-# using regex expression from https://www.geeksforgeeks.org/extract-urls-present-in-a-given-string/
+
+
+
+#######################################################################################
+############################### Feature Extraction ####################################
+#######################################################################################
+
+# topic extraction model
+def extract_topic_feature(row, components=None, tokenizer=None, random_state=None):
+    if components is None:
+        components = len(row)
+    if row is not None and components > 1:
+        tweets = np.array(row)
+
+        vectorize = TfidfVectorizer(tokenizer=tokenizer, 
+                                    ngram_range=(1, 2),
+                                    stop_words=None if tokenizer is not None else 'english',
+                                    min_df=1)
+        nmf_model = NMF(n_components=components, 
+                        init='nndsvd', 
+                        max_iter=100000, 
+                        random_state=random_state)
+
+        nmf_pipe = make_pipeline(vectorize, nmf_model)
+        
+        
+        W = nmf_pipe.fit_transform(tweets)
+        
+        index_max = []
+        for index in range(W.shape[0]):
+            max_val_index = np.argmax(W[index])
+            index_max.append(max_val_index)
+            
+        index_norm = np.array(index_max) / components
+        
+        return index_norm
+    else:
+        return np.nan
+
+
+# import this one
+# topic extraction and metrics feature generation
+def extract_nmf_feature(df, tokenizer=spacy_tokenizer):
+    df.loc[:, 'topic_dist'] = df['tweet'].apply(lambda x: extract_topic_feature(x, tokenizer=tokenizer) if x is not None else np.nan)
+    df.loc[:, 'topic_skew'] = df['topic_dist'].apply(lambda x: skew(x) if x is not None else np.nan)
+    df.loc[:, 'topic_kurtosis'] = df['topic_dist'].apply(lambda x: kurtosis(x) if x is not None else np.nan)
+    df.loc[:, 'topic_gini'] = df['topic_dist'].apply(lambda x: gini(x) if x is not None else np.nan)
+    df.loc[:, 'std'] = df['topic_dist'].apply(lambda x: x.std() if x is not None else np.nan)
+    return df
+
+
+
+# number of links
+# using regex expression from 
+# https://www.geeksforgeeks.org/extract-urls-present-in-a-given-string/
 def extract_num_links(tweet, unique):
     # remove comma or peroid as they throw off the regex
     links = re.findall(r'\b((?:https?|ftp|file)://[-a-zA-Z0-9+&@#/%?=~_|!:, .;]*[-a-zA-Z0-9+&@#/%=~_|])', tweet)
@@ -50,7 +132,7 @@ def extract_num_links(tweet, unique):
     else:
         return len(links)
 
-
+# number of mentions
 def extract_num_mentions(tweet, unique):
     mentions = re.findall(r'@\w+', tweet)
     if unique:
@@ -58,10 +140,12 @@ def extract_num_mentions(tweet, unique):
     else:
         return len(mentions)
 
+# is retweet
 def is_retweet(tweet):
     return 1 if tweet.startswith('RT') else 0
 
-
+# import this one
+# tweet level feature generation links, mentions, retweet
 def tweet_level_feature_generation(original_tweet_df, normalize=False, unique=False):
     tweet_df = prep_data_explode(original_tweet_df)
 
@@ -79,7 +163,9 @@ def tweet_level_feature_generation(original_tweet_df, normalize=False, unique=Fa
             result_df[col] = result_df[col] / result_df.iloc[:, -1]
     return result_df
 
-
+################################################################################################
+##################################### data splitting ###########################################
+################################################################################################
 
 def train_test_dev_split(df, train, dev_test_split=None, shuffle=True, random_state=None):
     X, y = df.iloc[:, :-1], df.iloc[:, -1]
@@ -97,7 +183,7 @@ def train_test_dev_split(df, train, dev_test_split=None, shuffle=True, random_st
     else:
         return train_df, test_df
 
-
+# Import this one
 def split_all_data(train_split:float, train_path:str='Twibot-20/train.json', test_path:str='Twibot-20/test.json', 
                    dev_path:str='Twibot-20/dev.json', support_path:str='Twibot-20/support.json', 
                    include_support:bool=False, dev_test_split:float=None, shuffle:bool=True, 
@@ -139,14 +225,20 @@ def split_all_data(train_split:float, train_path:str='Twibot-20/train.json', tes
     # combine train, test, dev
     twibot_df = pd.concat([train, dev, test], axis=0).reset_index(drop=True)
 
-    # split the sets and get ids to remove from support
+    # split the sets
     print('Splitting the data...')
     if dev_test_split is not None:
-        results['train'], results['dev'], results['test'] = train_test_dev_split(twibot_df, train=train_split, 
-                                                                                 dev_test_split=dev_test_split, shuffle=shuffle)
+        results['train'], results['dev'], results['test'] = train_test_dev_split(twibot_df, 
+                                                                                 train=train_split, 
+                                                                                 dev_test_split=dev_test_split, 
+                                                                                 shuffle=shuffle, 
+                                                                                 random_state=random_state)
     else:
-        results['train'], results['test'] = train_test_dev_split(twibot_df, train=train_split, 
-                                                                 dev_test_split=dev_test_split, shuffle=shuffle)
+        results['train'], results['test'] = train_test_dev_split(twibot_df, 
+                                                                 train=train_split, 
+                                                                 dev_test_split=dev_test_split, 
+                                                                 shuffle=shuffle, 
+                                                                 random_state=random_state)
 
     # save results
     if save_result:
