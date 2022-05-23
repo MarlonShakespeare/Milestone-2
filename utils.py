@@ -18,6 +18,9 @@ from scipy.stats import skew, kurtosis
 # nltk.download('stopwords')
 stop_words = stopwords.words('english')
 
+import random as rnd
+import tensorflow as tf
+from tensorflow import keras
 
 ###################################################################################
 # stemming and lemmatizing
@@ -253,3 +256,144 @@ def split_all_data(train_split:float, train_path:str='Twibot-20/train.json', tes
         pass
     # return results
     return results
+
+
+################################################################################################
+##################################### deep learning ############################################
+################################################################################################
+
+
+def nn_tweet_only(train_df, val_df, layers=(100,100), epochs=20):
+    """
+    Arguments: dataframes of the type output by utils.split_all_data
+        Layers sets the size of the two densely connected NN layers
+        
+    Returns: A fitted TFIDF vecorizer and a fitted NN model
+    """
+
+    train = train_df.copy()
+    val = val_df.copy()
+    
+    # Change tweet list into single character string
+    print("Prepping tweet data...")
+    train['tweet'] = train['tweet'].apply(lambda x: ' '.join(x) if x is not None else np.nan)
+    val['tweet'] = val['tweet'].apply(lambda x: ' '.join(x) if x is not None else np.nan)
+    
+    train.dropna(inplace=True)
+    val.dropna(inplace=True)
+
+    # Vectorize tweet data
+    # Prepare vectors for the model
+    print("Vectorizing tweets...")
+    vectorizer = TfidfVectorizer(stop_words = 'english', min_df=500, ngram_range=(1,3))
+
+    X_train = vectorizer.fit_transform(train.tweet).toarray()
+    feat_size = X_train.shape[1]   
+    
+    y_train = np.array(train.label)
+    
+    X_val = vectorizer.transform(val.tweet).toarray()
+    y_val = np.array(val.label)
+
+    # Initialize the model
+    model = tf.keras.Sequential([
+        tf.keras.layers.Dense(layers[0], activation='relu'),
+        tf.keras.layers.Dense(layers[1], activation='relu'),
+        tf.keras.layers.Dense(2, activation='softmax')
+    ])
+    
+    # Set up a callback to stop when loss on the validation set stops decreasing
+    # Parameters were determined in the exploration phase
+    val_stop = tf.keras.callbacks.EarlyStopping(
+        monitor="val_loss",
+        min_delta=0.005,
+        patience=0,
+        verbose=1,
+        mode="auto",
+        baseline=None,
+        restore_best_weights=True,
+    )
+
+    model.compile(optimizer='adam',
+                  loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
+                  metrics=['accuracy']
+                 )
+
+    model.fit(X_train, y_train, epochs=epochs, validation_data=(X_val, y_val), callbacks=[val_stop])
+    
+    return vectorizer, model
+
+
+def add_nn_signal(test_df, vectorizer, model):
+    """
+    Arguments: A dataframe of the type output by utils.split_all_data
+               A TFIDF vectorizer and NN model of the types output by utils.nn_tweet_only 
+               
+    Returns: A dataframe with a new column 'nn_signal' which gives the model's prediction (as a probabilty)
+                that the account is human (label==1 on original)  
+    """
+    
+    test = test_df.copy()
+    out_df = test_df.copy()
+    
+    test['tweet'] = test['tweet'].apply(lambda x: ' '.join(x) if x is not None else ' ')
+
+    
+    out_df['nn_signal'] = model.predict(vectorizer.transform(test.tweet).toarray()).T[1]
+    
+    return out_df
+    
+
+    
+
+################################################################################################
+##################################### adding features ##########################################
+################################################################################################
+
+
+def add_feat(df):
+    """
+    Adds tweet and account features to dataframe df
+    
+    Argument: dataframe of type output by utils.split_all_data
+    Returns: dataframe of same type
+    
+    Assumes that file lang.csv is in home directory
+    """
+    
+    # Number of languages represented in tweets
+    lang_df = pd.read_csv('lang.csv')
+    tw_features_df = df.merge(lang_df, how='inner', on='ID')
+
+    # Min, max, average, and standard deviation of lengths of tweets
+    tw_features_df['tweet_min_len'] = tw_features_df['tweet'].apply(lambda x: min([ len(t) for t in x ]))
+    tw_features_df['tweet_max_len'] = tw_features_df['tweet'].apply(lambda x: max([ len(t) for t in x ]))
+    tw_features_df['tweet_av_len'] = tw_features_df['tweet'].apply(lambda x: np.mean([ len(t) for t in x ]))
+    tw_features_df['tweet_len_std'] = tw_features_df['tweet'].apply(lambda x: np.std([ len(t) for t in x ]))
+
+    # Lengths of user and screen names
+    tw_features_df['user_name_len'] = tw_features_df['profile'].apply(lambda x: len(x['name']))
+    tw_features_df['screen_name_len'] = tw_features_df['profile'].apply(lambda x: len(x['screen_name']))
+
+    # Number of distinct characters in user name
+    tw_features_df['user_name_chars'] = tw_features_df['profile'].apply(lambda x: len(set(x['name'])))
+
+    # Protected and verified status
+    # ****** Only two protected accounts!
+    tw_features_df['protected'] = tw_features_df['profile'].apply(lambda x: int(x['protected'] == 'True '))
+    tw_features_df['verified'] = tw_features_df['profile'].apply(lambda x: int(x['verified'] == 'True '))
+
+    # Is a URL associated with the account
+    tw_features_df['has_url'] = tw_features_df['profile'].apply(lambda x: int(x['url'] != 'None '))
+
+    # Social counts
+    tw_features_df['followers_count'] = tw_features_df['profile'].apply(lambda x: int(x['followers_count']))
+    tw_features_df['friends_count'] = tw_features_df['profile'].apply(lambda x: int(x['friends_count']))
+    tw_features_df['favourites_count'] = tw_features_df['profile'].apply(lambda x: int(x['favourites_count']))
+
+    ref_date = pd.to_datetime('May 01 2022')
+
+    # How many days before May 1 2022 was the account created
+    tw_features_df['days_old'] = tw_features_df['profile'].apply(lambda x: (ref_date - pd.to_datetime(x['created_at']).replace(tzinfo=None)).days)
+
+    return tw_features_df
