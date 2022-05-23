@@ -91,9 +91,11 @@ def extract_topic_feature(row, components=None, tokenizer=None, random_state=Non
                         init='nndsvd', 
                         max_iter=100000, 
                         random_state=random_state)
-
-        nmf_pipe = make_pipeline(vectorize, nmf_model)
         
+        try:
+            nmf_pipe = make_pipeline(vectorize, nmf_model)
+        except ValueError:
+            return np.nan
         
         W = nmf_pipe.fit_transform(tweets)
         
