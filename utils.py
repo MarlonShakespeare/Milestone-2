@@ -1,12 +1,16 @@
 import nltk
 from nltk.stem import PorterStemmer
 from nltk.corpus import stopwords
+from nltk.sentiment import SentimentIntensityAnalyzer
 import spacy
 spacy_model = spacy.load('en_core_web_lg')
+nlp = spacy.load('en_core_web_md')
 
 from sklearn.decomposition import NMF
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.pipeline import make_pipeline
+from sklearn.metrics.pairwise import cosine_similarity
+
 
 import gzip
 import re
@@ -399,3 +403,40 @@ def add_feat(df):
     tw_features_df['days_old'] = tw_features_df['profile'].apply(lambda x: (ref_date - pd.to_datetime(x['created_at']).replace(tzinfo=None)).days)
 
     return tw_features_df
+
+
+def calculate_similarity(df):
+  "Takes a dataframe of tweets, calculates their similarity and appends them to the dataframe."
+  similarity = []
+  for user_sent in df:
+      w2v = []
+      # Ignoring users where tweet = None
+      if user_sent is not None:
+          # We take each user sentence, and get it's average word2vec embedding and append it to w2v list
+          # For each user we will have a w2v array created, after all the users sentences are done, we calculate the 
+          # cosine similarity between the w2v vectors and append the value to the similarity list, which will be later on
+          # appended to the dataset as a feature in the supervised learning model
+          for sentence in user_sent:
+            vec = nlp(sentence).vector
+            w2v.append(vec)
+    
+          sim = cosine_similarity(w2v)
+          np.fill_diagonal(sim,0)
+          similarity.append(sim.mean())
+    
+    df['similarity'] = similarity
+    return df
+
+def tweet_level_features(df):
+    df['listed_count'] = df['profile'].apply(lambda x: int(x['listed_count']))
+    df['statuses_count'] = df['profile'].apply(lambda x: int(x['statuses_count']))
+    df['description_len'] =  df['profile'].apply(lambda x: len(x['description']))
+    return df
+
+def generate_sentiment_feature(df):
+    sia = SentimentIntensityAnalyzer()
+    df['sentiment'] = df['tweet'].apply(lambda x: np.mean([ sia.polarity_scores(t)['compound'] for t in x ]))
+    df['sentiment'] = df['sentiment'].apply(lambda x: x>0) 
+    df['sentiment'] = df['sentiment'].replace({True:'Positive',False:'Negative'})
+    return df
+    
