@@ -93,7 +93,7 @@ def extract_topic_feature(row, components=None, tokenizer=None, random_state=Non
                                     min_df=1)
         nmf_model = NMF(n_components=components, 
                         init='nndsvd', 
-                        max_iter=100000, 
+                        max_iter=1000, 
                         random_state=random_state)
         
         try:
@@ -122,7 +122,7 @@ def extract_nmf_feature(df, tokenizer=spacy_tokenizer):
     df.loc[:, 'topic_skew'] = df['topic_dist'].apply(lambda x: skew(x) if x is not None else np.nan)
     df.loc[:, 'topic_kurtosis'] = df['topic_dist'].apply(lambda x: kurtosis(x) if x is not None else np.nan)
     df.loc[:, 'topic_gini'] = df['topic_dist'].apply(lambda x: gini(x) if x is not None else np.nan)
-    df.loc[:, 'std'] = df['topic_dist'].apply(lambda x: x.std() if x is not None else np.nan)
+    df.loc[:, 'topic_std'] = df['topic_dist'].apply(lambda x: x.std() if x is not None else np.nan)
     return df
 
 
@@ -170,7 +170,7 @@ def tweet_level_feature_generation(original_tweet_df, normalize=False, unique=Fa
     if normalize:
         for col in result_df.columns[1:-1]:
             result_df[col] = result_df[col] / result_df.iloc[:, -1]
-    return result_df
+    return original_tweet_df.merge(result_df, how='inner', on='ID')
 
 ################################################################################################
 ##################################### data splitting ###########################################
@@ -313,7 +313,7 @@ def nn_tweet_only(train_df, val_df, layers=(100,100), epochs=20):
     val_stop = tf.keras.callbacks.EarlyStopping(
         monitor="val_loss",
         min_delta=0.005,
-        patience=0,
+        patience=3,
         verbose=1,
         mode="auto",
         baseline=None,
@@ -406,23 +406,23 @@ def add_feat(df):
 
 
 def calculate_similarity(df):
-  "Takes a dataframe of tweets, calculates their similarity and appends them to the dataframe."
-  similarity = []
-  for user_sent in df:
-      w2v = []
-      # Ignoring users where tweet = None
-      if user_sent is not None:
-          # We take each user sentence, and get it's average word2vec embedding and append it to w2v list
-          # For each user we will have a w2v array created, after all the users sentences are done, we calculate the 
-          # cosine similarity between the w2v vectors and append the value to the similarity list, which will be later on
-          # appended to the dataset as a feature in the supervised learning model
-          for sentence in user_sent:
-            vec = nlp(sentence).vector
-            w2v.append(vec)
+    "Takes a dataframe of tweets, calculates their similarity and appends them to the dataframe."
+    similarity = []
+    for user_sent in df:
+        w2v = []
+        # Ignoring users where tweet = None
+        if user_sent is not None:
+            # We take each user sentence, and get it's average word2vec embedding and append it to w2v list
+            # For each user we will have a w2v array created, after all the users sentences are done, we calculate the 
+            # cosine similarity between the w2v vectors and append the value to the similarity list, which will be later on
+            # appended to the dataset as a feature in the supervised learning model
+            for sentence in user_sent:
+                vec = nlp(sentence).vector
+                w2v.append(vec)
     
-          sim = cosine_similarity(w2v)
-          np.fill_diagonal(sim,0)
-          similarity.append(sim.mean())
+            sim = cosine_similarity(w2v)
+            np.fill_diagonal(sim,0)
+            similarity.append(sim.mean())
     
     df['similarity'] = similarity
     return df
