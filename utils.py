@@ -96,12 +96,12 @@ def extract_topic_feature(row, components=None, tokenizer=None, random_state=Non
                         max_iter=200, 
                         random_state=random_state)
         
+        nmf_pipe = make_pipeline(vectorize, nmf_model)
+
         try:
-            nmf_pipe = make_pipeline(vectorize, nmf_model)
+            W = nmf_pipe.fit_transform(tweets)
         except ValueError:
             return np.nan
-        
-        W = nmf_pipe.fit_transform(tweets)
         
         index_max = []
         for index in range(W.shape[0]):
