@@ -93,7 +93,7 @@ def extract_topic_feature(row, components=None, tokenizer=None, random_state=Non
                                     min_df=1)
         nmf_model = NMF(n_components=components, 
                         init='nndsvd', 
-                        max_iter=1000, 
+                        max_iter=200, 
                         random_state=random_state)
         
         try:
@@ -424,8 +424,8 @@ def calculate_similarity(df):
             np.fill_diagonal(sim,0)
             similarity.append(sim.mean())
     
-    df['similarity'] = similarity
-    return df
+    
+    return similarity
 
 def tweet_level_features(df):
     df['listed_count'] = df['profile'].apply(lambda x: int(x['listed_count']))
