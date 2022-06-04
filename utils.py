@@ -8,7 +8,6 @@ nlp = spacy.load('en_core_web_md')
 
 from sklearn.decomposition import NMF
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.pipeline import make_pipeline
 from sklearn.metrics.pairwise import cosine_similarity
 
 
@@ -68,6 +67,8 @@ def prep_data_explode(df):
 # https://stackoverflow.com/questions/48999542/more-efficient-weighted-gini-coefficient-in-python 
 # by user Gaëtan de Menten
 def gini(x):
+    if np.array(x).shape == (0,):
+        return np.nan
     sorted_x = np.sort(x)
     n = len(x)
     cumx = np.cumsum(sorted_x, dtype=float)
@@ -82,25 +83,39 @@ def gini(x):
 
 # topic extraction model
 def extract_topic_feature(row, components=None, tokenizer=None, random_state=None):
-    if components is None:
-        components = len(row)
-    if row is not None and components > 1:
+    
+    if row is not None:
         tweets = np.array(row)
 
         vectorize = TfidfVectorizer(tokenizer=tokenizer, 
                                     ngram_range=(1, 2),
                                     stop_words=None if tokenizer is not None else 'english',
-                                    min_df=1)
+                                    min_df=2,
+                                    max_features=3000)
+        try:
+
+            vect_tweets = vectorize.fit_transform(tweets)
+        except Exception:
+            return np.nan
+
+        if components is None:
+            components = min(vect_tweets.shape)
+            if components < 2:
+                return np.nan
+        elif components > min(vect_tweets.shape):
+            components = min(vect_tweets.shape)
+            if components < 2:
+                return np.nan
+
         nmf_model = NMF(n_components=components, 
                         init='nndsvd', 
                         max_iter=200, 
                         random_state=random_state)
         
-        nmf_pipe = make_pipeline(vectorize, nmf_model)
-
         try:
-            W = nmf_pipe.fit_transform(tweets)
-        except ValueError:
+            W = nmf_model.fit_transform(vect_tweets)
+        except ValueError as e:
+            print(e)
             return np.nan
         
         index_max = []
@@ -121,8 +136,8 @@ def extract_nmf_feature(df, tokenizer=spacy_tokenizer):
     df.loc[:, 'topic_dist'] = df['tweet'].apply(lambda x: extract_topic_feature(x, tokenizer=tokenizer) if x is not None else np.nan)
     df.loc[:, 'topic_skew'] = df['topic_dist'].apply(lambda x: skew(x) if x is not None else np.nan)
     df.loc[:, 'topic_kurtosis'] = df['topic_dist'].apply(lambda x: kurtosis(x) if x is not None else np.nan)
-    df.loc[:, 'topic_gini'] = df['topic_dist'].apply(lambda x: gini(x) if x is not None else np.nan)
-    df.loc[:, 'topic_std'] = df['topic_dist'].apply(lambda x: x.std() if x is not None else np.nan)
+    df.loc[:, 'topic_gini'] = df['topic_dist'].apply(lambda x: gini(x) if (x is not None) and (len(x) > 0) else np.nan)
+    df.loc[:, 'topic_std'] = df['topic_dist'].apply(lambda x: np.array(x).std() if x is not None else np.nan)
     return df
 
 
