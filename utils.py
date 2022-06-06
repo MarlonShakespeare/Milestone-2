@@ -67,8 +67,6 @@ def prep_data_explode(df):
 # https://stackoverflow.com/questions/48999542/more-efficient-weighted-gini-coefficient-in-python 
 # by user Gaëtan de Menten
 def gini(x):
-    if np.array(x).shape == (0,):
-        return np.nan
     sorted_x = np.sort(x)
     n = len(x)
     cumx = np.cumsum(sorted_x, dtype=float)
@@ -132,8 +130,12 @@ def extract_topic_feature(row, components=None, tokenizer=None, random_state=Non
 
 # import this one
 # topic extraction and metrics feature generation
-def extract_nmf_feature(df, tokenizer=spacy_tokenizer):
+
+def extract_nmf(df, tokenizer=spacy_tokenizer):
     df.loc[:, 'topic_dist'] = df['tweet'].apply(lambda x: extract_topic_feature(x, tokenizer=tokenizer) if x is not None else np.nan)
+    return df
+
+def extract_nmf_features(df):
     df.loc[:, 'topic_skew'] = df['topic_dist'].apply(lambda x: skew(x) if x is not None else np.nan)
     df.loc[:, 'topic_kurtosis'] = df['topic_dist'].apply(lambda x: kurtosis(x) if x is not None else np.nan)
     df.loc[:, 'topic_gini'] = df['topic_dist'].apply(lambda x: gini(x) if (x is not None) and (len(x) > 0) else np.nan)
